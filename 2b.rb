@@ -1,5 +1,11 @@
+require 'forwardable'
+
 class Scanner
+  extend Forwardable
+  include Enumerable
+
   attr_reader :reports
+  def_delegator :reports, :each
 
   def initialize(file)
     @reports = file.each_line.lazy
@@ -40,12 +46,6 @@ class Scanner
       (monotonic? && changes_acceptable?) || within_anomaly_tolerance?
     end
 
-    def inspect
-      <<~REPORT.strip
-        <Report [#{levels.join(',')}] valid=#{valid?} mono=#{monotonic?} max_change=#{changes.max} min_change=#{changes.min}>
-      REPORT
-    end
-
     private
 
     def anomaly_alternatives
@@ -53,7 +53,7 @@ class Scanner
 
       levels.each_index.lazy.map do |i|
         Report.new(
-          levels.dup.tap { |l| l.delete_at(i) },
+          levels[0...i] + levels[i + 1..],
           change_threshold: change_threshold,
           anomaly_tolerance: anomaly_tolerance - 1,
         )
@@ -63,4 +63,4 @@ class Scanner
 end
 
 scanner = Scanner.new(ARGF)
-puts scanner.reports.count(&:valid?)
+puts scanner.count(&:valid?)
