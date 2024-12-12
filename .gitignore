@@ -1,1 +1,2 @@
-*.input
+spec/fixtures/**/actual.input
+spec/fixtures/**/actual.output
