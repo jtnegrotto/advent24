@@ -1,84 +1,175 @@
 require 'strscan'
 
 class Interpreter
-  class FunctionScanner
-    FUNCTION_CALL = %r{
-      (?<function_name> mul | do | don't )
-      \(
-        (?<function_args> (?: \d+ (?: , \d+ )* )? )
-      \)
-    }x
-
+  class Parser
     attr_reader :scanner
 
-    def initialize string
-      @scanner = StringScanner.new(string)
+    def initialize(input)
+      @scanner = StringScanner.new(input)
     end
 
-    def each
-      until scanner.eos?
-        func = scanner.scan_until(FUNCTION_CALL)
-        break unless func
-        yield current_instruction
-      end
+    # Primitive parsers
+
+    def match_string(string)
+      -> { scanner.scan(/#{Regexp.escape(string)}/) }
     end
 
-    private
+    def match_regexp(regexp)
+      -> { scanner.scan(regexp) }
+    end
 
-    def current_instruction
-      {
-        function: function_name,
-        args: function_args
+    # Combinators
+
+    def sequence(*parsers)
+      -> {
+        results = []
+        parsers.each do |parser|
+          result = parser.call
+          return nil unless result
+          results << result
+        end
+        results
       }
     end
 
-    def function_name
-      scanner[:function_name].to_sym
+    def choice(*parsers)
+      -> {
+        parsers.each do |parser|
+          result = parser.call
+          return result if result
+        end
+        nil
+      }
     end
 
-    def function_args
-      args = scanner[:function_args].split(',').map(&:strip)
-      args.map!(&:to_i) if args.all? { _1.match?(/\A\d+\z/) }
-      args
+    def repeat(parser)
+      -> {
+        results = []
+        while (result = parser.call)
+          results << result
+        end
+        results
+      }
     end
-  end
 
-  attr_reader :scanner, :disabled, :sum
+    def optional(parser, default: :optional)
+      -> { parser.call || default }
+    end
 
-  def initialize(string_or_io)
-    string = string_or_io.respond_to?(:read) ? string_or_io.read : string_or_io
-    @scanner = FunctionScanner.new(string)
-    @sum = 0
-    @disabled = false
-  end
+    def skip_until(parser)
+      -> {
+        while !scanner.eos?
+          result = parser.call
+          return result if result
 
-  def call
-    scanner.each do |instruction|
-      catch(:invalid_arguments) do
-        interpret(instruction)
+          scanner.skip(/./m) || break
+        end
+        nil
+      }
+    end
+
+    def map(parser, &block)
+      transform(parser) do |result|
+        result&.map(&block) || nil
       end
     end
 
-    @sum
+    def transform(parser, &block)
+      -> {
+        result = parser.call
+        result&.then(&block) || nil
+      }
+    end
+
+    # High-level parsers
+
+    def function_name
+      choice(match_string('mul'), match_string("don't"), match_string("do"))
+    end
+
+    def open_paren
+      match_string('(')
+    end
+
+    def close_paren
+      match_string(')')
+    end
+
+    def number
+      transform(match_regexp(/\d+/), &:to_i)
+    end
+
+    def comma
+      match_string(',')
+    end
+
+    def argument
+      number
+    end
+
+    def arguments
+      transform(
+        sequence(
+          argument,
+          optional(
+            map(
+              repeat(sequence(comma, argument)),
+              &:last
+            ),
+            default: []
+          )
+        ),
+        &:flatten
+      )
+    end
+
+    def function_call
+      transform(
+        sequence(
+          function_name,
+          open_paren,
+          optional(arguments, default: []),
+          close_paren
+        )
+      ) do |name, _, args, _|
+        { function: name, arguments: args }
+      end
+    end
+
+    def program
+      repeat(skip_until(function_call))
+    end
+
+    def each
+      program.call.each do |instruction|
+        yield instruction
+      end
+    end
   end
 
-  private
+  attr_reader :state
 
-  def interpret(instruction)
-    case instruction[:function]
-    when :mul
-      throw :invalid_arguments unless instruction[:args].size == 2
-      throw :invalid_arguments unless instruction[:args].all? { _1.is_a?(Integer) }
-      return if @disabled
-      @sum += instruction[:args].inject(:*)
-    when :do
-      throw :invalid_arguments unless instruction[:args].empty?
-      @disabled = false
-    when :"don't"
-      throw :invalid_arguments unless instruction[:args].empty?
-      @disabled = true
+  def initialize(input)
+    @parser = Parser.new(input)
+    @state = { enabled: true, sum: 0 }
+  end
+
+  def call
+    @parser.each do |instruction|
+      case instruction
+      in { function: 'mul', arguments: [a, b] }
+        @state[:sum] += a * b if @state[:enabled]
+      in { function: 'do', arguments: [] }
+        @state[:enabled] = true
+      in { function: "don't", arguments: [] }
+        @state[:enabled] = false
+      else
+        # Ignore invalid instructions like any other junk data
+      end
     end
+
+    @state[:sum]
   end
 end
 
-puts Interpreter.new(ARGF).call
+puts Interpreter.new(ARGF.read).call
