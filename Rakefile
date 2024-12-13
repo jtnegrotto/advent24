@@ -3,7 +3,24 @@ require 'net/http'
 BASE_URL = 'https://adventofcode.com/2024'
 SESSION = ENV['AOC_SESSION']
 
+namespace :run do
+  desc 'Test against example input'
+  task :example, [:day, :part] do |t, args|
+    day = args[:day]
+    part = args[:part]
+    puts `ruby solutions/day#{day}/part#{part}.rb spec/fixtures/day#{day}/part#{part}/example.input`
+  end
+
+  desc 'Test against actual input'
+  task :actual, [:day, :part] do |t, args|
+    day = args[:day]
+    part = args[:part]
+    puts `ruby solutions/day#{day}/part#{part}.rb spec/fixtures/day#{day}/part#{part}/actual.input`
+  end
+end
+
 namespace :inputs do
+  desc 'Download all inputs'
   task :download do
     day = Time.now.strftime('%Y-%m') == '2024-12' ? Time.now.day : 25
     effective_day = [day, 25].min
